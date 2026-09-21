@@ -1,0 +1,28 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  description String
+  amount      Float
+  type        String   // "INCOME" (receita) ou "EXPENSE" (despesa)
+  category    String   // Ex: Alimentação, Salário, Investimento
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  @@index([date])
+}
+
+model Investment {
+  id        String   @id @default(cuid())
+  name      String   // Ex: Ações, Tesouro Direto, Cripto
+  amount    Float    // Valor investido na moeda original
+  currency  String   // "BRL", "USD", "EUR"
+  createdAt DateTime @default(now())
+}
