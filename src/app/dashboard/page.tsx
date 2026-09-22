@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Wallet, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, CalendarClock, Check } from "lucide-react";
+import { Wallet, TrendingUp, ArrowUpRight, ArrowDownRight, AlertTriangle, CalendarClock, Check, LineChart } from "lucide-react";
 import { api, errMsg } from "@/lib/client";
-import { brl, fmtDate, money } from "@/lib/format";
+import { brl, fmtDate, monthLabel, money } from "@/lib/format";
 import { card, ErrorBox, PageTitle } from "@/components/ui";
 
 type Summary = {
@@ -16,27 +16,31 @@ type Rates = { USD: number | null; EUR: number | null };
 type TaskItem = { id: string; title: string; kind: "TASK" | "BILL"; amount: number | null; dueDate: string; done: boolean };
 type RecItem = { id: string; description: string; amount: number; type: "INCOME" | "EXPENSE"; account: { name: string } | null };
 type Today = { dueToday: TaskItem[]; overdue: TaskItem[]; recurringToday: RecItem[] };
+type Forecast = { months: { month: string; income: number; expense: number; net: number }[] };
 
 export default function Dashboard() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [txs, setTxs] = useState<Tx[]>([]);
   const [rates, setRates] = useState<Rates>({ USD: null, EUR: null });
   const [today, setToday] = useState<Today | null>(null);
+  const [forecast, setForecast] = useState<Forecast | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       await api("/api/recurring/run", { method: "POST" }).catch(() => null); // gera recorrentes vencidos
-      const [s, t, r, hoje] = await Promise.all([
+      const [s, t, r, hoje, prev] = await Promise.all([
         api<Summary>("/api/summary"),
         api<{ items: Tx[] }>("/api/transactions?limit=8"),
         api<Rates>("/api/rates"),
         api<Today>("/api/today"),
+        api<Forecast>("/api/forecast"),
       ]);
       setSummary(s);
       setTxs(t.items);
       setRates(r);
       setToday(hoje);
+      setForecast(prev);
       setError(null);
     } catch (e) {
       setError(`Não foi possível carregar os dados: ${errMsg(e)}`);
@@ -160,6 +164,25 @@ export default function Dashboard() {
           {s && !s.ratesOk && <p className="mt-2 text-xs text-slate-500">Sem cotação no momento.</p>}
         </div>
       </div>
+
+      <section className={`${card} mb-8`}>
+        <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold"><LineChart className="h-4 w-4 text-emerald-500" /> Previsão — próximos 3 meses</h2>
+        <p className="mb-4 text-xs text-slate-500">Com base nas contas recorrentes ativas e em lançamentos parcelados já cadastrados.</p>
+        {forecast ? (
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            {forecast.months.map((m) => (
+              <div key={m.month} className="rounded-xl border border-slate-800 p-4">
+                <p className="text-sm capitalize text-slate-400">{monthLabel(m.month)}</p>
+                <p className="mt-2 flex items-center gap-1 text-sm text-emerald-400"><ArrowUpRight className="h-3.5 w-3.5" /> {brl(m.income)}</p>
+                <p className="flex items-center gap-1 text-sm text-rose-400"><ArrowDownRight className="h-3.5 w-3.5" /> {brl(m.expense)}</p>
+                <p className={`mt-2 text-lg font-bold ${m.net >= 0 ? "text-emerald-400" : "text-rose-400"}`}>{brl(m.net)}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">Carregando…</p>
+        )}
+      </section>
 
       <section className={card}>
         <div className="mb-4 flex items-center justify-between">
