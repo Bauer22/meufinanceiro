@@ -62,7 +62,7 @@ export default function ChatExpense() {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ex: Gastei 120 em combustível…"
+          placeholder="Ex: Gastei 120 em combustível, ou Comprei tênis 300 em 3x"
           aria-label="Mensagem"
           className="flex-1 rounded-xl border border-slate-800 bg-slate-900 px-4 py-3 text-slate-100 focus:border-emerald-500 focus:outline-none"
         />

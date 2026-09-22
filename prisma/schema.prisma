@@ -7,6 +7,16 @@ generator client {
   provider = "prisma-client-js"
 }
 
+model Account {
+  id             String        @id @default(cuid())
+  name           String
+  type           String        @default("CHECKING") // CHECKING (conta), CASH (dinheiro), CARD (cartão)
+  initialBalance Float         @default(0)
+  createdAt      DateTime      @default(now())
+  transactions   Transaction[]
+  recurrings     Recurring[]
+}
+
 model Transaction {
   id          String   @id @default(cuid())
   description String
@@ -16,13 +26,59 @@ model Transaction {
   date        DateTime @default(now())
   createdAt   DateTime @default(now())
 
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  // Parcelamento
+  installmentGroup  String?
+  installmentNumber Int?
+  installmentTotal  Int?
+
+  // Gerado por um lançamento recorrente (evita duplicar no mesmo mês)
+  recurringId    String?
+  recurringMonth String?
+
+  @@unique([recurringId, recurringMonth])
   @@index([date])
+  @@index([accountId])
+  @@index([installmentGroup])
+}
+
+model Recurring {
+  id          String   @id @default(cuid())
+  description String
+  amount      Float
+  type        String   // "INCOME" ou "EXPENSE"
+  category    String
+  dayOfMonth  Int
+  startMonth  String   // "YYYY-MM"
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  accountId String?
+  account   Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+}
+
+model Budget {
+  id       String @id @default(cuid())
+  category String @unique
+  limit    Float
+}
+
+model Goal {
+  id        String    @id @default(cuid())
+  name      String
+  target    Float
+  saved     Float     @default(0)
+  deadline  DateTime?
+  createdAt DateTime  @default(now())
 }
 
 model Investment {
-  id        String   @id @default(cuid())
-  name      String   // Ex: Ações, Tesouro Direto, Cripto
-  amount    Float    // Valor investido na moeda original
-  currency  String   // "BRL", "USD", "EUR"
-  createdAt DateTime @default(now())
+  id          String   @id @default(cuid())
+  name        String   // Ex: Ações, Tesouro Direto, Cripto
+  amount      Float    // Valor investido na moeda original
+  currency    String   // "BRL", "USD", "EUR"
+  rateAtEntry Float?   // Cotação em BRL na data do aporte (BRL = 1)
+  createdAt   DateTime @default(now())
 }

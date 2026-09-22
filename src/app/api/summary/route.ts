@@ -1,36 +1,54 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getRates, rateFor } from "@/lib/rates";
+import { keyOf, monthBounds, todayParts, utcNoon } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
-// Retorna o resumo real do banco. Investimentos em USD/EUR são convertidos com as cotações recebidas.
-export async function GET(req: Request) {
-  const sp = new URL(req.url).searchParams;
-  const usd = Number(sp.get("usd")) || 1;
-  const eur = Number(sp.get("eur")) || 1;
+type Row = { type: string; _sum: { amount: number | null } };
+const sum = (rows: Row[], type: string) => rows.find((r) => r.type === type)?._sum.amount ?? 0;
 
-  const now = new Date();
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+export async function GET() {
+  const today = todayParts();
+  const bounds = monthBounds(keyOf(today.y, today.m))!;
+  const untilToday = utcNoon(today.y, today.m, today.d);
 
-  const [all, month, investments] = await Promise.all([
-    prisma.transaction.groupBy({ by: ["type"], _sum: { amount: true } }),
+  const [upToToday, month, accounts, investments, budgets, spentByCat, rates] = await Promise.all([
+    prisma.transaction.groupBy({ by: ["type"], where: { date: { lte: untilToday } }, _sum: { amount: true } }),
+    prisma.transaction.groupBy({ by: ["type"], where: { date: { gte: bounds.start, lt: bounds.end } }, _sum: { amount: true } }),
+    prisma.account.aggregate({ _sum: { initialBalance: true } }),
+    prisma.investment.findMany(),
+    prisma.budget.findMany(),
     prisma.transaction.groupBy({
-      by: ["type"],
-      where: { date: { gte: monthStart, lt: nextMonth } },
+      by: ["category"],
+      where: { type: "EXPENSE", date: { gte: bounds.start, lt: bounds.end } },
       _sum: { amount: true },
     }),
-    prisma.investment.findMany(),
+    getRates(),
   ]);
 
-  type Row = { type: string; _sum: { amount: number | null } };
-  const sum = (rows: Row[], type: string) => rows.find((r) => r.type === type)?._sum.amount ?? 0;
-  const rate = (c: string) => (c === "USD" ? usd : c === "EUR" ? eur : 1);
+  let invCurrent = 0;
+  let invCost = 0;
+  let invKnown = true;
+  for (const i of investments) {
+    const now = rateFor(rates, i.currency);
+    invCurrent += i.amount * (now ?? i.rateAtEntry ?? 1);
+    if (i.rateAtEntry == null) invKnown = false;
+    else invCost += i.amount * i.rateAtEntry;
+  }
+
+  const alerts = budgets
+    .map((b) => ({ category: b.category, limit: b.limit, spent: spentByCat.find((s) => s.category === b.category)?._sum.amount ?? 0 }))
+    .filter((b) => b.spent >= b.limit * 0.8)
+    .sort((a, b) => b.spent / b.limit - a.spent / a.limit);
 
   return NextResponse.json({
-    balance: sum(all, "INCOME") - sum(all, "EXPENSE"),
+    balance: (accounts._sum.initialBalance ?? 0) + sum(upToToday, "INCOME") - sum(upToToday, "EXPENSE"),
     income: sum(month, "INCOME"),
     expense: sum(month, "EXPENSE"),
-    investments: investments.reduce((acc: number, i: { amount: number; currency: string }) => acc + i.amount * rate(i.currency), 0),
+    investments: invCurrent,
+    investmentsGain: invKnown ? invCurrent - invCost : null,
+    ratesOk: !!rates,
+    alerts,
   });
 }

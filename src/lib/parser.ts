@@ -1,3 +1,5 @@
+import { todayParts, utcNoon, daysInMonth } from "./dates";
+
 // Interpretador de frases em português, baseado em regras simples (sem IA).
 // Ex.: "Gastei 45,90 no mercado hoje" -> { type: "EXPENSE", amount: 45.9, category: "Alimentação", ... }
 
@@ -7,6 +9,7 @@ export type ParsedTransaction = {
   type: "INCOME" | "EXPENSE";
   category: string;
   date: Date;
+  installments?: number;
 };
 
 const INCOME_WORDS = [
@@ -28,6 +31,9 @@ const CATEGORIES: { name: string; words: string[]; income?: boolean }[] = [
   { name: "Investimento", words: ["investi", "investimento", "acoes", "ações", "tesouro", "cripto", "bitcoin"] },
   { name: "Impostos", words: ["imposto", "das", "iptu", "ipva", "taxa"] },
 ];
+
+// Palavras curtas (gas, luz, das, bar) só valem inteiras; as longas aceitam plural/flexão.
+const hasWord = (t: string, w: string) => new RegExp(w.length <= 4 ? `\\b${strip(w)}\\b` : `\\b${strip(w)}`).test(t);
 
 const strip = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 
@@ -58,36 +64,52 @@ function findAmount(text: string): { value: number; match: string } | null {
 }
 
 function findDate(text: string, now: Date): { date: Date; match: string | null } {
-  const base = new Date(now);
-  base.setHours(12, 0, 0, 0);
+  const today = todayParts(now);
   const t = strip(text);
-  if (/\banteontem\b/.test(t)) { base.setDate(base.getDate() - 2); return { date: base, match: "anteontem" }; }
-  if (/\bontem\b/.test(t)) { base.setDate(base.getDate() - 1); return { date: base, match: "ontem" }; }
+  const shift = (days: number) => {
+    const base = utcNoon(today.y, today.m, today.d);
+    base.setUTCDate(base.getUTCDate() - days);
+    return base;
+  };
+  if (/\banteontem\b/.test(t)) return { date: shift(2), match: "anteontem" };
+  if (/\bontem\b/.test(t)) return { date: shift(1), match: "ontem" };
   const m = text.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
   if (m) {
     const d = parseInt(m[1], 10);
-    const mo = parseInt(m[2], 10) - 1;
-    let y = m[3] ? parseInt(m[3], 10) : base.getFullYear();
+    const mo = parseInt(m[2], 10);
+    let y = m[3] ? parseInt(m[3], 10) : today.y;
     if (y < 100) y += 2000;
-    const date = new Date(y, mo, d, 12, 0, 0);
-    if (!isNaN(date.getTime()) && mo >= 0 && mo < 12 && d >= 1 && d <= 31) return { date, match: m[0] };
+    if (mo >= 1 && mo <= 12 && d >= 1 && d <= daysInMonth(y, mo)) return { date: utcNoon(y, mo, d), match: m[0] };
   }
-  return { date: base, match: /\bhoje\b/.test(t) ? "hoje" : null };
+  return { date: utcNoon(today.y, today.m, today.d), match: /\bhoje\b/.test(t) ? "hoje" : null };
 }
 
+// "em 3x", "3x", "3 parcelas", "parcelado em 3"
+const INSTALLMENT_RE = /(?:parcelad[oa]\s+)?(?:em\s+)?\b(\d{1,2})\s*(?:x|vezes|parcelas?)\b/i;
+
 export function parseTransaction(input: string, now = new Date()): ParsedTransaction | null {
-  const text = input.trim();
+  let text = input.trim();
   if (!text) return null;
+
+  let installments: number | undefined;
+  const im = text.match(INSTALLMENT_RE);
+  if (im) {
+    const n = parseInt(im[1], 10);
+    if (n >= 2 && n <= 48) {
+      installments = n;
+      text = text.replace(im[0], " ").replace(/\s+/g, " ").trim();
+    }
+  }
 
   const amt = findAmount(text);
   if (!amt) return null;
 
   const t = strip(text);
-  const isIncome = INCOME_WORDS.some((w) => new RegExp(`\\b${strip(w)}`).test(t));
+  const isIncome = INCOME_WORDS.some((w) => hasWord(t, w));
   const type: "INCOME" | "EXPENSE" = isIncome ? "INCOME" : "EXPENSE";
 
   const cat = CATEGORIES.find(
-    (c) => (c.income === undefined || c.income === isIncome) && c.words.some((w) => new RegExp(`\\b${strip(w)}`).test(t)),
+    (c) => (c.income === undefined || c.income === isIncome) && c.words.some((w) => hasWord(t, w)),
   );
   const category = cat?.name ?? "Outros";
 
@@ -103,5 +125,5 @@ export function parseTransaction(input: string, now = new Date()): ParsedTransac
     .trim();
   const description = desc ? desc.charAt(0).toUpperCase() + desc.slice(1) : category;
 
-  return { description, amount: amt.value, type, category, date };
+  return { description, amount: amt.value, type, category, date, ...(installments ? { installments } : {}) };
 }
